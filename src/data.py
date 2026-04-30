@@ -79,10 +79,17 @@ def load_oogiri_t2t(
     n_eval = max(1, int(len(odai_ids) * eval_ratio))
     eval_set = set(odai_ids[:n_eval])
 
-    train_df = df[~df["odai_id"].isin(eval_set)].reset_index(drop=True)
-    eval_df = df[df["odai_id"].isin(eval_set)].reset_index(drop=True)
+    train_df = df[~df["odai_id"].isin(eval_set)].copy()
+    eval_df = df[df["odai_id"].isin(eval_set)].copy()
 
-    return train_df, eval_df
+    # odai_id (例: "ogiri-bokete-501") を末尾の数値順に並べる
+    # ※ 文字列として sort すると "10" < "2" になるので数値抽出して並べる
+    def _sort_by_odai(d: pd.DataFrame) -> pd.DataFrame:
+        d["_oid_num"] = d["odai_id"].str.extract(r"(\d+)$", expand=False).astype(int)
+        d = d.sort_values(["_oid_num", "response_id"]).drop(columns="_oid_num")
+        return d.reset_index(drop=True)
+
+    return _sort_by_odai(train_df), _sort_by_odai(eval_df)
 
 
 def to_chat_dataset(df: pd.DataFrame, system_prompt: str = SYSTEM_PROMPT) -> Dataset:
