@@ -103,3 +103,58 @@ def to_chat_dataset(df: pd.DataFrame, system_prompt: str = SYSTEM_PROMPT) -> Dat
         for _, row in df.iterrows()
     ]
     return Dataset.from_dict({"messages": messages})
+
+
+def load_oogiri_dpo(
+    eval_ratio: float = 0.1,
+    seed: int = 42,
+    top_k: int = 5,
+    n_pairs_per_odai: int | None = None,
+    min_score_gap: int = 10,
+    system_prompt: str = SYSTEM_PROMPT,
+) -> tuple[Dataset, Dataset]:
+    """大喜利データを DPO preference pair 形式 (prompt/chosen/rejected) で返す
+
+    同じお題内で score が高い回答を chosen、低い回答を rejected としてペア化する。
+    返り値は会話形式の HuggingFace Dataset で、TRL DPOTrainer がそのまま受けられる。
+
+    Args:
+        eval_ratio: eval に回すお題の割合
+        seed: お題分割の乱数シード
+        top_k: 各お題で score 上位 top_k 件だけからペアを作る
+        n_pairs_per_odai: 各お題で生成するペア数の上限 (None なら全組み合わせ = top_k*(top_k-1)/2)
+        min_score_gap: chosen と rejected の score 差の最小値 (ノイズ除外)
+        system_prompt: prompt に入れる system メッセージ
+
+    Returns:
+        (train_ds, eval_ds). 各レコードのスキーマ:
+            prompt:   list[{role: "system"|"user", content: str}]
+            chosen:   list[{role: "assistant", content: str}]
+            rejected: list[{role: "assistant", content: str}]
+    """
+    train_df, eval_df = load_oogiri_t2t(eval_ratio=eval_ratio, seed=seed, top_k=top_k)
+
+    def _make_pairs(df: pd.DataFrame) -> Dataset:
+        all_pairs: list[dict] = []
+        for _, group in df.groupby("odai_id", sort=False):
+            sg = group.sort_values("score", ascending=False).reset_index(drop=True)
+            odai_pairs: list[dict] = []
+            for i in range(len(sg)):
+                for j in range(i + 1, len(sg)):
+                    ch, rj = sg.iloc[i], sg.iloc[j]
+                    if int(ch["score"]) - int(rj["score"]) < min_score_gap:
+                        continue
+                    odai_pairs.append({
+                        "prompt": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": ch["odai"]},
+                        ],
+                        "chosen": [{"role": "assistant", "content": ch["text"]}],
+                        "rejected": [{"role": "assistant", "content": rj["text"]}],
+                    })
+            if n_pairs_per_odai is not None:
+                odai_pairs = odai_pairs[:n_pairs_per_odai]
+            all_pairs.extend(odai_pairs)
+        return Dataset.from_list(all_pairs)
+
+    return _make_pairs(train_df), _make_pairs(eval_df)
