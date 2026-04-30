@@ -1,28 +1,39 @@
 """大喜利データのロード・整形ユーティリティ
 
-HuggingFace から `YANS-official/ogiri-bokete` の `text_to_text` を取得し、
-responses を flatten + train/eval split + chat 形式変換まで一括で扱う。
+`YANS-official/ogiri-bokete` は train/ 直下に metadata.jsonl + 700枚の jpg を持つ。
+text_to_text しか使わないので metadata.jsonl のみ DL し、画像はスキップする。
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
-from datasets import Dataset, load_dataset
+from datasets import Dataset
+from huggingface_hub import hf_hub_download
 
 # SFTで使うシステムプロンプト
 SYSTEM_PROMPT = "あなたは大喜利の達人です。お題に対して、短く面白い回答を一つだけ返してください。"
 
 HF_DATASET = "YANS-official/ogiri-bokete"
+METADATA_FILE = "train/metadata.jsonl"
 
 
 def fetch_oogiri_t2t() -> pd.DataFrame:
-    """HF から text_to_text を取得し、responses を行展開した flat な DataFrame を返す
+    """metadata.jsonl のみ取得 (画像はスキップ) → text_to_text を行展開して返す
 
     Returns:
         カラム [odai_id, odai, response_id, text, score] の DataFrame
     """
-    ds = load_dataset(HF_DATASET, split="train")
-    df = ds.to_pandas()
+    path = hf_hub_download(
+        repo_id=HF_DATASET,
+        filename=METADATA_FILE,
+        repo_type="dataset",
+    )
+    with open(path, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+
+    df = pd.DataFrame(rows)
     df = df[df["type"] == "text_to_text"].reset_index(drop=True)
 
     # responses (list[dict]) を行展開
@@ -40,7 +51,7 @@ def load_oogiri_t2t(
     seed: int = 42,
     top_k: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """HF から取得 → top_k フィルタ → お題単位で train/eval 分割
+    """text_to_text を取得 → top_k フィルタ → お題単位で train/eval 分割
 
     Args:
         eval_ratio: eval に回すお題の割合
@@ -61,7 +72,8 @@ def load_oogiri_t2t(
         )
 
     # 同じお題の回答が train と eval に混ざらないよう、お題IDで分割
-    odai_ids = df["odai_id"].unique().copy()
+    # ArrowStringArray のままだと shuffle の警告が出るので numpy ndarray に変換
+    odai_ids = np.asarray(df["odai_id"].unique())
     rng = np.random.default_rng(seed)
     rng.shuffle(odai_ids)
     n_eval = max(1, int(len(odai_ids) * eval_ratio))
