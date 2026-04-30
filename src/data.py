@@ -108,21 +108,22 @@ def to_chat_dataset(df: pd.DataFrame, system_prompt: str = SYSTEM_PROMPT) -> Dat
 def load_oogiri_dpo(
     eval_ratio: float = 0.1,
     seed: int = 42,
-    top_k: int = 5,
-    n_pairs_per_odai: int | None = None,
+    chosen_top_k: int = 1,
+    rejected_bottom_k: int = 5,
     min_score_gap: int = 10,
     system_prompt: str = SYSTEM_PROMPT,
 ) -> tuple[Dataset, Dataset]:
     """大喜利データを DPO preference pair 形式 (prompt/chosen/rejected) で返す
 
-    同じお題内で score が高い回答を chosen、低い回答を rejected としてペア化する。
-    返り値は会話形式の HuggingFace Dataset で、TRL DPOTrainer がそのまま受けられる。
+    同じお題内で score 上位を chosen、score 下位を rejected として組み合わせる。
+    デフォルトは top1 × (last1〜last5) で 1お題あたり最大5ペア。
+    返り値は会話形式の HuggingFace Dataset で TRL DPOTrainer がそのまま受けられる。
 
     Args:
         eval_ratio: eval に回すお題の割合
         seed: お題分割の乱数シード
-        top_k: 各お題で score 上位 top_k 件だけからペアを作る
-        n_pairs_per_odai: 各お題で生成するペア数の上限 (None なら全組み合わせ = top_k*(top_k-1)/2)
+        chosen_top_k: 各お題で chosen として使う score上位 N 件
+        rejected_bottom_k: 各お題で rejected として使う score下位 M 件
         min_score_gap: chosen と rejected の score 差の最小値 (ノイズ除外)
         system_prompt: prompt に入れる system メッセージ
 
@@ -132,19 +133,25 @@ def load_oogiri_dpo(
             chosen:   list[{role: "assistant", content: str}]
             rejected: list[{role: "assistant", content: str}]
     """
-    train_df, eval_df = load_oogiri_t2t(eval_ratio=eval_ratio, seed=seed, top_k=top_k)
+    train_df, eval_df = load_oogiri_t2t(eval_ratio=eval_ratio, seed=seed, top_k=None)
 
     def _make_pairs(df: pd.DataFrame) -> Dataset:
         all_pairs: list[dict] = []
         for _, group in df.groupby("odai_id", sort=False):
             sg = group.sort_values("score", ascending=False).reset_index(drop=True)
-            odai_pairs: list[dict] = []
-            for i in range(len(sg)):
-                for j in range(i + 1, len(sg)):
-                    ch, rj = sg.iloc[i], sg.iloc[j]
+            n = len(sg)
+            # top: position 0 .. chosen_top_k-1
+            top_indices = list(range(min(chosen_top_k, n)))
+            # bottom: 末尾 rejected_bottom_k 件
+            bottom_indices = list(range(max(0, n - rejected_bottom_k), n))
+            for ti in top_indices:
+                for bi in bottom_indices:
+                    if bi <= ti:  # 重複/逆転防止
+                        continue
+                    ch, rj = sg.iloc[ti], sg.iloc[bi]
                     if int(ch["score"]) - int(rj["score"]) < min_score_gap:
                         continue
-                    odai_pairs.append({
+                    all_pairs.append({
                         "prompt": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": ch["odai"]},
@@ -152,9 +159,6 @@ def load_oogiri_dpo(
                         "chosen": [{"role": "assistant", "content": ch["text"]}],
                         "rejected": [{"role": "assistant", "content": rj["text"]}],
                     })
-            if n_pairs_per_odai is not None:
-                odai_pairs = odai_pairs[:n_pairs_per_odai]
-            all_pairs.extend(odai_pairs)
         return Dataset.from_list(all_pairs)
 
     return _make_pairs(train_df), _make_pairs(eval_df)
