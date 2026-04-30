@@ -1,0 +1,22 @@
+[project]
+name = "oogiri-ai"
+version = "0.0.1"
+description = "Oogiri (Japanese comedy) AI training playground"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "pyarrow",
+    "huggingface-hub",
+    "matplotlib",
+    "japanize-matplotlib",
+    "jupyter",
+    "ipykernel",
+    "datasets>=4.8.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

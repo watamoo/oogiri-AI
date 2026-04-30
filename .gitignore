@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+build/
+dist/
+
+# venv
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Data (HFから再生成可能なので追跡しない)
+data/raw/
+data/processed/
+
+# モデル/checkpoint
+checkpoints/
+
+# 実験ログ・出力 (今後生成するもの。先頭/でルート限定)
+*.log
+/logs/
+/outputs/
+
+# HF / pip cache
+.cache/
